@@ -1,0 +1,41 @@
+version: '3.7'
+services:
+  web:
+    image: kzmake/traefik:v2.2.1-patched-forwardauth
+    command: >
+      --api.dashboard=true
+      --api.insecure=true
+      --providers.docker=true
+      --tracing.jaeger=true
+      --tracing.jaeger.localAgentHostPort=tracing:6831
+    ports:
+      - 80:80
+      - 8080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+  tracing:
+    image: jaegertracing/all-in-one:latest
+    command: >
+      --memory.max-traces ${MAX_TRACES:-100}
+    ports:
+      - 6831:6831/udp
+      - 16686:16686
+  randauth:
+    image: kzmake/randauth
+    labels:
+      - traefik.http.middlewares.randauth.forwardauth.address=http://randauth:3000/request
+      - traefik.http.middlewares.randauth.forwardauth.authResponseHeaders=X-User-Id
+      - traefik.http.middlewares.randauth.forwardauth.forwardRequest=true
+      - traefik.http.services.randauth.loadbalancer.server.port=3000
+  whoami:
+    image: containous/whoami
+    labels:
+      - traefik.http.routers.whoami.rule=Host(`whoami.example.com`)
+      - traefik.http.routers.whoami.middlewares=randauth
+      - traefik.http.services.whoami.loadbalancer.server.port=80
+  httpbin:
+    image: kennethreitz/httpbin
+    labels:
+      - traefik.http.routers.httpbin.rule=Host(`httpbin.example.com`)
+      - traefik.http.routers.httpbin.middlewares=randauth
+      - traefik.http.services.httpbin.loadbalancer.server.port=80

@@ -1,0 +1,69 @@
+diff --git a/pkg/config/dynamic/middlewares.go b/pkg/config/dynamic/middlewares.go
+index cba305a7..8acef9b1 100644
+--- a/pkg/config/dynamic/middlewares.go
++++ b/pkg/config/dynamic/middlewares.go
+@@ -141,6 +141,7 @@ type ForwardAuth struct {
+ 	Address             string     `json:"address,omitempty" toml:"address,omitempty" yaml:"address,omitempty"`
+ 	TLS                 *ClientTLS `json:"tls,omitempty" toml:"tls,omitempty" yaml:"tls,omitempty"`
+ 	TrustForwardHeader  bool       `json:"trustForwardHeader,omitempty" toml:"trustForwardHeader,omitempty" yaml:"trustForwardHeader,omitempty" export:"true"`
++	ForwardRequest      bool       `json:"forwardRequest,omitempty" toml:"forwardRequest,omitempty" yaml:"forwardRequest,omitempty" export:"true"`
+ 	AuthResponseHeaders []string   `json:"authResponseHeaders,omitempty" toml:"authResponseHeaders,omitempty" yaml:"authResponseHeaders,omitempty"`
+ }
+ 
+diff --git a/pkg/middlewares/auth/forward.go b/pkg/middlewares/auth/forward.go
+index a39abbea..045d223c 100644
+--- a/pkg/middlewares/auth/forward.go
++++ b/pkg/middlewares/auth/forward.go
+@@ -1,6 +1,7 @@
+ package auth
+ 
+ import (
++	"bytes"
+ 	"context"
+ 	"fmt"
+ 	"io/ioutil"
+@@ -31,6 +32,7 @@ type forwardAuth struct {
+ 	name                string
+ 	client              http.Client
+ 	trustForwardHeader  bool
++	forwardRequest      bool
+ }
+ 
+ // NewForward creates a forward auth middleware.
+@@ -43,6 +45,7 @@ func NewForward(ctx context.Context, next http.Handler, config dynamic.ForwardAu
+ 		next:                next,
+ 		name:                name,
+ 		trustForwardHeader:  config.TrustForwardHeader,
++		forwardRequest:      config.ForwardRequest,
+ 	}
+ 
+ 	// Ensure our request client does not follow redirects
+@@ -74,7 +77,27 @@ func (fa *forwardAuth) GetTracingInformation() (string, ext.SpanKindEnum) {
+ func (fa *forwardAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+ 	logger := log.FromContext(middlewares.GetLoggerCtx(req.Context(), fa.name, forwardedTypeName))
+ 
+-	forwardReq, err := http.NewRequest(http.MethodGet, fa.address, nil)
++	var forwardReq *http.Request
++	var err error
++
++	if fa.forwardRequest == true {
++		reqBody, readErr := ioutil.ReadAll(req.Body)
++		if readErr != nil {
++			logMessage := fmt.Sprintf("Error reading request body %s. Cause: %s", fa.address, readErr)
++			logger.Debug(logMessage)
++			tracing.SetErrorWithEvent(req, logMessage)
++
++			rw.WriteHeader(http.StatusInternalServerError)
++			return
++		}
++		defer req.Body.Close()
++
++		req.Body = ioutil.NopCloser(bytes.NewBuffer(reqBody))
++		forwardReq, err = http.NewRequest(req.Method, fa.address, bytes.NewReader(reqBody))
++	} else {
++		forwardReq, err = http.NewRequest(http.MethodGet, fa.address, nil)
++	}
++
+ 	tracing.LogRequest(tracing.GetSpan(req), forwardReq)
+ 	if err != nil {
+ 		logMessage := fmt.Sprintf("Error calling %s. Cause %s", fa.address, err)

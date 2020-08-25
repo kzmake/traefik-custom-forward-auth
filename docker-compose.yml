@@ -1,7 +1,7 @@
 version: '3.7'
 services:
   web:
-    image: kzmake/traefik:v2.2.1-patched-forwardauth
+    image: kzmake/traefik:v2.2.8-patched-forwardauth
     command: >
       --api.dashboard=true
       --api.insecure=true
